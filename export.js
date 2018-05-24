@@ -57,6 +57,8 @@ function getImageClasses(node) {
 function getImageDimensions(node) {
     if (node.hidpi === '2x' && node.width && node.height) {
         return ' width="' + node.width + '" height="' + node.height + '"';
+    } else {
+        return '';
     }
 }
 
