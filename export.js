@@ -6,6 +6,8 @@
  * @license MIT
  */
 
+const path = require('path');
+const legacyUrl = require('url');
 const readline = require('readline');
 const https = require('https');
 const fs = require('fs');
@@ -18,11 +20,11 @@ function validateUrl(value) {
     return /^(?:(?:(?:https?|ftp):)?\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))(?::\d{2,5})?(?:[/?#]\S*)?$/i.test(value);
 }
 
-function toHTML(dom) {
+function toHTML(dom, payload) {
     let html = '';
     if (dom.nodes && dom.nodes.body && dom.nodes.body.nodes) {
         for (let key of dom.nodes.body.nodes) {
-            html += nodeHTML(key, dom);
+            html += nodeHTML(key, dom, payload);
         }
     }
     return html;
@@ -68,15 +70,29 @@ function getAlignClass(node) {
     }
 }
 
-function fetchImage(url) {
-    // TODO: implement it by fetching the image.
+function fetchImage(url, payload) {
+    let options = legacyUrl.parse(url);
+    options.method = 'GET';
+    options.headers = { 'Authorization': 'Bearer ' + payload.jwt };
 
-    // TODO: return the new path to it.
+    let filename = path.basename(url);
 
-    return url;
+    let data = '';
+    let request = https.request(options, (response) => {
+        response.on('data', (chunk) => {
+            data += chunk;
+        });
+        response.on('end', () => {
+            writeFile(filename, data);
+        });
+    });
+
+    request.end();
+
+    return filename;
 }
 
-function partialHTML(key, content, dom) {
+function partialHTML(key, content, dom, payload) {
 
     let insertions = new Map();
 
@@ -105,7 +121,7 @@ function partialHTML(key, content, dom) {
             if (/image/.test(node.type)) {
                 let fileNode = dom.nodes[node.imageFile];
                 if (node.start) {
-                    set(insertions, node.start.offset, '<img src="' + fetchImage(fileNode.url) + '"' + getImageClasses(node) + getImageDimensions(node) + '>');
+                    set(insertions, node.start.offset, '<img src="' + fetchImage(fileNode.url, payload) + '"' + getImageClasses(node) + getImageDimensions(node) + '>');
                 }
             }
 
@@ -244,7 +260,7 @@ function getFormattedCode(node) {
     // return Prism.highlight(node.source, Prism.languages[node.language]);
 }
 
-function nodeHTML(key, dom) {
+function nodeHTML(key, dom, payload) {
     let node = dom.nodes[key];
     if (!node) {
         return;
@@ -254,11 +270,11 @@ function nodeHTML(key, dom) {
 
     switch (true) {
         case /paragraph/.test(node.type):
-            return '<p class="sc-text-block sm-align-' + align + ' sc-paragraph prose-paragraph"><span class="sc-text-property" style="white-space: pre-wrap;">' + partialHTML(key, node.content, dom) + '</span></p>';
+            return '<p class="sc-text-block sm-align-' + align + ' sc-paragraph prose-paragraph"><span class="sc-text-property" style="white-space: pre-wrap;">' + partialHTML(key, node.content, dom, payload) + '</span></p>';
         case /blockquote/.test(node.type):
-            return '<div class="sc-text-block sm-align-' + align + ' sc-blockquote"><span class="sc-text-property" style="white-space: pre-wrap;">' + partialHTML(key, node.content, dom) + '</span></div>';
+            return '<div class="sc-text-block sm-align-' + align + ' sc-blockquote"><span class="sc-text-property" style="white-space: pre-wrap;">' + partialHTML(key, node.content, dom, payload) + '</span></div>';
         case /heading/.test(node.type):
-            return '<h' + node.level + ' class="sc-text-block sm-align-' + align + ' sc-heading sm-level-' + node.level + '">' + partialHTML(key, node.content, dom) + '</h' + node.level + '>';
+            return '<h' + node.level + ' class="sc-text-block sm-align-' + align + ' sc-heading sm-level-' + node.level + '">' + partialHTML(key, node.content, dom, payload) + '</h' + node.level + '>';
         case /video/.test(node.type):
             return '<cavy-video src="' + node.url + '"' + getAlignClass(node) + '></cavy-video>';
         case /script/.test(node.type):
@@ -275,7 +291,7 @@ function nodeHTML(key, dom) {
 
             for (let listItemKey of node.items) {
                 let listItemNode = dom.nodes[listItemKey];
-                listHTML += '<li>' + partialHTML(listItemKey, listItemNode.content, dom) + '</li>';
+                listHTML += '<li>' + partialHTML(listItemKey, listItemNode.content, dom, payload) + '</li>';
             }
 
             if (node.ordered) {
@@ -290,9 +306,9 @@ function nodeHTML(key, dom) {
     return '';
 }
 
-function readDocument(json) {
+function readDocument(json, payload) {
     let dom = JSON.parse(json);
-    return toHTML(dom);
+    return toHTML(dom, payload);
 }
 
 function decode(base64str) {
@@ -318,11 +334,11 @@ function fetchDocuments(topics, payload) {
     let fetchDocument = (topic) => {
         return new Promise((resolve, reject) => {
             let options = {
-                host: payload['host'],
+                host: payload.host,
                 port: 443,
                 path: '/api/documents/' + topic.id,
                 method: 'GET',
-                headers: { 'Authorization': 'Bearer ' + payload['jwt'] }
+                headers: { 'Authorization': 'Bearer ' + payload.jwt }
             };
             let data = '';
             let request = https.request(options, (response) => {
@@ -347,7 +363,7 @@ function fetchDocuments(topics, payload) {
         promises[i].then((document) => {
             documents.push(document);
             // write the parsed document to html
-            writeFile(document.id + '.html', readDocument(document.content));
+            writeFile(document.id + '.html', readDocument(document.content, payload));
             i++;
             if (i < promises.length) {
                 chain(i);
@@ -365,11 +381,11 @@ let fetchTopicsCallback = (value) => {
     rl.close();
 
     let options = {
-        host: payload['host'],
+        host: payload.host,
         port: 443,
         path: '/api/topics',
         method: 'GET',
-        headers: { 'Authorization': 'Bearer ' + payload['jwt'] }
+        headers: { 'Authorization': 'Bearer ' + payload.jwt }
     };
 
     let data = '';
@@ -379,12 +395,7 @@ let fetchTopicsCallback = (value) => {
         });
         response.on('end', () => {
             let topics = JSON.parse(data);
-            fs.writeFile('./topics.json', data, function(err) {
-                if (err) {
-                    return console.log(err);
-                }
-                console.log("topics.js saved");
-            });
+            writeFile('./topics.json', data);
             fetchDocuments(topics, payload);
         });
     });
