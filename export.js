@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+/**
+ * Cavy Exporter
+ *
+ * @license MIT
+ */
+
 const readline = require('readline');
 const https = require('https');
 const fs = require('fs');
